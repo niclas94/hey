@@ -1,0 +1,206 @@
+import pandas as pd
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
+TOL = 0.01  # tolerance
+
+# -------------------
+# Run comparison
+# -------------------
+def run_check():
+    try:
+        start_row = int(entry_start_row.get())
+        end_row = int(entry_end_row.get())
+        start_col = int(entry_start_col.get())
+        end_col = int(entry_end_col.get())
+        x0 = float(entry_x0.get())
+        y0 = float(entry_y0.get())
+        dx = float(entry_dx.get())
+        dy = float(entry_dy.get())
+        file1 = entry_file1.get()
+        file2 = entry_file2.get()
+
+        if not file1 or not file2:
+            messagebox.showerror("Error", "Please select both Excel files.")
+            return
+
+    except ValueError:
+        messagebox.showerror("Error", "Invalid numeric input.")
+        return
+
+    try:
+        df1 = pd.read_excel(file1, usecols=["Net", "X-led", "Y-led"])
+        df2 = pd.read_excel(file2, usecols=["Net"])
+
+        # Apply row selection
+        df1 = df1.iloc[start_row:end_row].reset_index(drop=True)
+        df2 = df2.iloc[start_row:end_row].reset_index(drop=True)
+
+        # Apply column selection (currently just for info, doesn't slice df yet)
+        # You could later slice df1[['Net','X-led','Y-led']][start_col:end_col]
+
+        df2["X_calc"] = x0 + df2.index * dx
+        df2["Y_calc"] = y0 + df2.index * dy
+
+        errors = 0
+        results = []
+
+        for i in range(len(df2)):
+            if i >= len(df1):
+                match = False
+            else:
+                match = (
+                    df1.at[i, "Net"] == df2.at[i, "Net"]
+                    and abs(df1.at[i, "X-led"] - df2.at[i, "X_calc"]) <= TOL
+                    and abs(df1.at[i, "Y-led"] - df2.at[i, "Y_calc"]) <= TOL
+                )
+
+            if not match:
+                errors += 1
+                results.append((
+                    df2.at[i, "Net"],
+                    df1.at[i, "X-led"] if i < len(df1) else "",
+                    df1.at[i, "Y-led"] if i < len(df1) else "",
+                    "FAIL"
+                ))
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Processing failed:\n{e}")
+        return
+
+    tree.delete(*tree.get_children())
+
+    for row in results:
+        tree.insert("", "end", values=row, tags=("fail",))
+
+    error_label.config(text=f"Errors: {errors}")
+
+# -------------------
+# Reset
+# -------------------
+def reset_gui():
+    tree.delete(*tree.get_children())
+
+    for entry in [entry_start_row, entry_end_row, entry_start_col, entry_end_col,
+                  entry_x0, entry_y0, entry_dx, entry_dy, entry_file1, entry_file2]:
+        entry.delete(0, tk.END)
+
+    entry_start_row.insert(0, "0")
+    entry_end_row.insert(0, "10")
+    entry_start_col.insert(0, "0")
+    entry_end_col.insert(0, "10")
+    entry_x0.insert(0, "1")
+    entry_y0.insert(0, "1")
+    entry_dx.insert(0, "0")
+    entry_dy.insert(0, "1")
+
+    error_label.config(text="Errors: 0")
+
+# -------------------
+# Browse
+# -------------------
+def browse_file(entry):
+    file = filedialog.askopenfilename(
+        title="Select Excel File",
+        filetypes=[("Excel files", "*.xlsx *.xls")]
+    )
+    if file:
+        entry.delete(0, tk.END)
+        entry.insert(0, file)
+
+# -------------------
+# GUI
+# -------------------
+root = tk.Tk()
+root.title("Coordinate Checker")
+root.geometry("1500x550")
+
+# Labels
+labels = [
+    "Starting Row", "Ending Row",
+    "Starting Column", "Ending Column",
+    "x\u2080", "y\u2080", "\u0394X", "\u0394Y",
+    "Excel File 1", "Excel File 2"
+]
+
+# Row and column entries
+tk.Label(root, text="Starting Row").grid(row=0, column=0, sticky="w", padx=5)
+entry_start_row = tk.Entry(root, width=10)
+entry_start_row.grid(row=0, column=1, sticky="w", padx=5)
+entry_start_row.insert(0, "0")
+
+tk.Label(root, text="Ending Row").grid(row=1, column=0, sticky="w", padx=5)
+entry_end_row = tk.Entry(root, width=10)
+entry_end_row.grid(row=1, column=1, sticky="w", padx=5)
+entry_end_row.insert(0, "10")
+
+tk.Label(root, text="Starting Column").grid(row=2, column=0, sticky="w", padx=5)
+entry_start_col = tk.Entry(root, width=10)
+entry_start_col.grid(row=2, column=1, sticky="w", padx=5)
+entry_start_col.insert(0, "0")
+
+tk.Label(root, text="Ending Column").grid(row=3, column=0, sticky="w", padx=5)
+entry_end_col = tk.Entry(root, width=10)
+entry_end_col.grid(row=3, column=1, sticky="w", padx=5)
+entry_end_col.insert(0, "10")
+
+# X0, Y0, ΔX, ΔY
+tk.Label(root, text="x\u2080").grid(row=4, column=0, sticky="w", padx=5)
+entry_x0 = tk.Entry(root, width=10)
+entry_x0.grid(row=4, column=1, sticky="w", padx=5)
+entry_x0.insert(0, "1")
+
+tk.Label(root, text="y\u2080").grid(row=5, column=0, sticky="w", padx=5)
+entry_y0 = tk.Entry(root, width=10)
+entry_y0.grid(row=5, column=1, sticky="w", padx=5)
+entry_y0.insert(0, "1")
+
+tk.Label(root, text="\u0394X").grid(row=6, column=0, sticky="w", padx=5)
+entry_dx = tk.Entry(root, width=10)
+entry_dx.grid(row=6, column=1, sticky="w", padx=5)
+entry_dx.insert(0, "0")
+
+tk.Label(root, text="\u0394Y").grid(row=7, column=0, sticky="w", padx=5)
+entry_dy = tk.Entry(root, width=10)
+entry_dy.grid(row=7, column=1, sticky="w", padx=5)
+entry_dy.insert(0, "1")
+
+# Excel files
+tk.Label(root, text="Excel File 1").grid(row=8, column=0, sticky="w", padx=5)
+entry_file1 = tk.Entry(root, width=35)
+entry_file1.grid(row=8, column=1, sticky="w", padx=5)
+tk.Button(root, text="Browse...", command=lambda: browse_file(entry_file1)).grid(row=8, column=2, sticky="w", padx=5)
+
+tk.Label(root, text="Excel File 2").grid(row=9, column=0, sticky="w", padx=5)
+entry_file2 = tk.Entry(root, width=35)
+entry_file2.grid(row=9, column=1, sticky="w", padx=5)
+tk.Button(root, text="Browse...", command=lambda: browse_file(entry_file2)).grid(row=9, column=2, sticky="w", padx=5)
+
+# Buttons
+tk.Button(root, text="Run", width=10, command=run_check).grid(row=10, column=0, pady=10, sticky="w")
+tk.Button(root, text="Reset", width=10, command=reset_gui).grid(row=10, column=1, pady=10, sticky="w")
+
+# Error label
+error_label = tk.Label(root, text="Errors: 0", font=("Arial", 12))
+error_label.grid(row=11, column=0, columnspan=2, sticky="w")
+
+# Treeview + Scrollbar
+frame = tk.Frame(root)
+frame.grid(row=0, column=3, rowspan=12, sticky="nsew", padx=10, pady=2)
+
+columns = ["Net", "X", "Y", "Status"]
+tree = ttk.Treeview(frame, columns=columns, show="headings")
+tree.pack(side="left", fill="both", expand=True)
+
+scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+scroll.pack(side="right", fill="y")
+tree.configure(yscrollcommand=scroll.set)
+
+for col in columns:
+    tree.heading(col, text=col)
+    tree.column(col, anchor="center")
+
+tree.tag_configure("fail", background="#b22222")
+
+root.grid_columnconfigure(3, weight=1)
+root.mainloop()
