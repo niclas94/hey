@@ -24,52 +24,72 @@ def run_check():
             messagebox.showerror("Error", "Please select both Excel files.")
             return
 
+        if end_col <= start_col or end_row <= start_row:
+            messagebox.showerror("Error", "Ending row/column must be greater than starting.")
+            return
+
     except ValueError:
         messagebox.showerror("Error", "Invalid numeric input.")
         return
 
     try:
+        # File 1: fixed columns by name
         df1 = pd.read_excel(file1, usecols=["Net", "X-led", "Y-led"])
-        df2 = pd.read_excel(file2, usecols=["Net"])
-
-        # Apply row selection
         df1 = df1.iloc[start_row:end_row].reset_index(drop=True)
+
+        # File 2: dynamic column selection by index
+        df2 = pd.read_excel(file2, usecols=range(start_col, end_col))
         df2 = df2.iloc[start_row:end_row].reset_index(drop=True)
 
-        # Apply column selection (currently just for info, doesn't slice df yet)
-        # You could later slice df1[['Net','X-led','Y-led']][start_col:end_col]
+        # Normalize column names to 0..N-1
+        df2.columns = range(len(df2.columns))
 
-        df2["X_calc"] = x0 + df2.index * dx
-        df2["Y_calc"] = y0 + df2.index * dy
+        n_cols = end_col - start_col
+        n_rows = end_row - start_row
 
         errors = 0
         results = []
+        i = 0  # linear Excel index
 
-        for i in range(len(df2)):
-            if i >= len(df1):
-                match = False
+        for row in range(n_rows):
+
+            # Snake pattern
+            if row % 2 == 0:
+                col_iter = range(n_cols)          # →
             else:
+                col_iter = reversed(range(n_cols))  # ←
+
+            for col in col_iter:
+                if i >= len(df1) or i >= len(df2):
+                    break
+
+                x_calc = x0 + col * dx
+                y_calc = y0 + row * dy
+
+                net_val = df2.at[i, 0]  # first selected column treated as Net
+
                 match = (
-                    df1.at[i, "Net"] == df2.at[i, "Net"]
-                    and abs(df1.at[i, "X-led"] - df2.at[i, "X_calc"]) <= TOL
-                    and abs(df1.at[i, "Y-led"] - df2.at[i, "Y_calc"]) <= TOL
+                    df1.at[i, "Net"] == net_val
+                    and abs(df1.at[i, "X-led"] - x_calc) <= TOL
+                    and abs(df1.at[i, "Y-led"] - y_calc) <= TOL
                 )
 
-            if not match:
-                errors += 1
-                results.append((
-                    df2.at[i, "Net"],
-                    df1.at[i, "X-led"] if i < len(df1) else "",
-                    df1.at[i, "Y-led"] if i < len(df1) else "",
-                    "FAIL"
-                ))
+                if not match:
+                    errors += 1
+                    results.append((
+                        net_val,
+                        df1.at[i, "X-led"],
+                        df1.at[i, "Y-led"],
+                        "FAIL"
+                    ))
+
+                i += 1
 
     except Exception as e:
         messagebox.showerror("Error", f"Processing failed:\n{e}")
         return
 
     tree.delete(*tree.get_children())
-
     for row in results:
         tree.insert("", "end", values=row, tags=("fail",))
 
@@ -81,8 +101,10 @@ def run_check():
 def reset_gui():
     tree.delete(*tree.get_children())
 
-    for entry in [entry_start_row, entry_end_row, entry_start_col, entry_end_col,
-                  entry_x0, entry_y0, entry_dx, entry_dy, entry_file1, entry_file2]:
+    for entry in [
+        entry_start_row, entry_end_row, entry_start_col, entry_end_col,
+        entry_x0, entry_y0, entry_dx, entry_dy, entry_file1, entry_file2
+    ]:
         entry.delete(0, tk.END)
 
     entry_start_row.insert(0, "0")
@@ -91,7 +113,7 @@ def reset_gui():
     entry_end_col.insert(0, "10")
     entry_x0.insert(0, "1")
     entry_y0.insert(0, "1")
-    entry_dx.insert(0, "0")
+    entry_dx.insert(0, "1")
     entry_dy.insert(0, "1")
 
     error_label.config(text="Errors: 0")
@@ -112,81 +134,43 @@ def browse_file(entry):
 # GUI
 # -------------------
 root = tk.Tk()
-root.title("Coordinate Checker")
+root.title("VPD Checker")
 root.geometry("1500x550")
 
-# Labels
-labels = [
-    "Starting Row", "Ending Row",
-    "Starting Column", "Ending Column",
-    "x\u2080", "y\u2080", "\u0394X", "\u0394Y",
-    "Excel File 1", "Excel File 2"
-]
+def add_entry(label, row, default):
+    tk.Label(root, text=label).grid(row=row, column=0, sticky="w", padx=5)
+    e = tk.Entry(root, width=10)
+    e.grid(row=row, column=1, sticky="w", padx=5)
+    e.insert(0, default)
+    return e
 
-# Row and column entries
-tk.Label(root, text="Starting Row").grid(row=0, column=0, sticky="w", padx=5)
-entry_start_row = tk.Entry(root, width=10)
-entry_start_row.grid(row=0, column=1, sticky="w", padx=5)
-entry_start_row.insert(0, "0")
+entry_start_row = add_entry("Starting Row", 0, "0")
+entry_end_row = add_entry("Ending Row", 1, "10")
+entry_start_col = add_entry("Starting Column", 2, "0")
+entry_end_col = add_entry("Ending Column", 3, "10")
+entry_x0 = add_entry("x₀", 4, "1")
+entry_y0 = add_entry("y₀", 5, "1")
+entry_dx = add_entry("ΔX", 6, "1")
+entry_dy = add_entry("ΔY", 7, "1")
 
-tk.Label(root, text="Ending Row").grid(row=1, column=0, sticky="w", padx=5)
-entry_end_row = tk.Entry(root, width=10)
-entry_end_row.grid(row=1, column=1, sticky="w", padx=5)
-entry_end_row.insert(0, "10")
-
-tk.Label(root, text="Starting Column").grid(row=2, column=0, sticky="w", padx=5)
-entry_start_col = tk.Entry(root, width=10)
-entry_start_col.grid(row=2, column=1, sticky="w", padx=5)
-entry_start_col.insert(0, "0")
-
-tk.Label(root, text="Ending Column").grid(row=3, column=0, sticky="w", padx=5)
-entry_end_col = tk.Entry(root, width=10)
-entry_end_col.grid(row=3, column=1, sticky="w", padx=5)
-entry_end_col.insert(0, "10")
-
-# X0, Y0, ΔX, ΔY
-tk.Label(root, text="x\u2080").grid(row=4, column=0, sticky="w", padx=5)
-entry_x0 = tk.Entry(root, width=10)
-entry_x0.grid(row=4, column=1, sticky="w", padx=5)
-entry_x0.insert(0, "1")
-
-tk.Label(root, text="y\u2080").grid(row=5, column=0, sticky="w", padx=5)
-entry_y0 = tk.Entry(root, width=10)
-entry_y0.grid(row=5, column=1, sticky="w", padx=5)
-entry_y0.insert(0, "1")
-
-tk.Label(root, text="\u0394X").grid(row=6, column=0, sticky="w", padx=5)
-entry_dx = tk.Entry(root, width=10)
-entry_dx.grid(row=6, column=1, sticky="w", padx=5)
-entry_dx.insert(0, "0")
-
-tk.Label(root, text="\u0394Y").grid(row=7, column=0, sticky="w", padx=5)
-entry_dy = tk.Entry(root, width=10)
-entry_dy.grid(row=7, column=1, sticky="w", padx=5)
-entry_dy.insert(0, "1")
-
-# Excel files
-tk.Label(root, text="Excel File 1").grid(row=8, column=0, sticky="w", padx=5)
+tk.Label(root, text="Pin report (.xlsx)").grid(row=8, column=0, sticky="w", padx=5)
 entry_file1 = tk.Entry(root, width=35)
 entry_file1.grid(row=8, column=1, sticky="w", padx=5)
-tk.Button(root, text="Browse...", command=lambda: browse_file(entry_file1)).grid(row=8, column=2, sticky="w", padx=5)
+tk.Button(root, text="Browse...", command=lambda: browse_file(entry_file1)).grid(row=8, column=2)
 
-tk.Label(root, text="Excel File 2").grid(row=9, column=0, sticky="w", padx=5)
+tk.Label(root, text="Ballmap (.xlsx)").grid(row=9, column=0, sticky="w", padx=5)
 entry_file2 = tk.Entry(root, width=35)
 entry_file2.grid(row=9, column=1, sticky="w", padx=5)
-tk.Button(root, text="Browse...", command=lambda: browse_file(entry_file2)).grid(row=9, column=2, sticky="w", padx=5)
+tk.Button(root, text="Browse...", command=lambda: browse_file(entry_file2)).grid(row=9, column=2)
 
-# Buttons
 tk.Button(root, text="Run", width=10, command=run_check).grid(row=10, column=0, pady=10, sticky="w")
 tk.Button(root, text="Reset", width=10, command=reset_gui).grid(row=10, column=1, pady=10, sticky="w")
 
-# Error label
 error_label = tk.Label(root, text="Errors: 0", font=("Arial", 12))
 error_label.grid(row=11, column=0, columnspan=2, sticky="w")
 
-# Treeview + Scrollbar
 frame = tk.Frame(root)
-frame.grid(row=0, column=3, rowspan=12, sticky="nsew", padx=10, pady=2)
+frame.grid(row=0, column=3, rowspan=12, sticky="nsew", padx=10)
 
 columns = ["Net", "X", "Y", "Status"]
 tree = ttk.Treeview(frame, columns=columns, show="headings")
