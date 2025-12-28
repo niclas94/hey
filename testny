@@ -1,0 +1,332 @@
+import tkinter as tk
+from tkinter import ttk, colorchooser, filedialog, messagebox
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.worksheet.datavalidation import DataValidation
+from docx import Document
+from docx.shared import Pt, RGBColor, Cm
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+import pandas as pd
+
+# ============================================================
+# Helper for Word borders & margins
+# ============================================================
+def border_width_from_style(style):
+    return {"thin": "10", "medium": "14", "thick": "18"}.get(style, "4")
+
+def set_cell_bg(cell, color):
+    shading_elm = OxmlElement('w:shd')
+    shading_elm.set(qn('w:fill'), color)
+    cell._tc.get_or_add_tcPr().append(shading_elm)
+
+def set_cell_border(cell, color="000000", width="4"):
+    tcPr = cell._tc.get_or_add_tcPr()
+    for border_name in ["top", "left", "bottom", "right"]:
+        border = OxmlElement(f"w:{border_name}")
+        border.set(qn('w:val'), 'single')
+        border.set(qn('w:sz'), width)
+        border.set(qn('w:color'), color)
+        tcPr.append(border)
+
+def set_column_width(table, col_idx, width_cm):
+    width_twips = int(width_cm * 567)
+    for row in table.rows:
+        tc = row.cells[col_idx]._tc
+        tcPr = tc.get_or_add_tcPr()
+        tcW = tcPr.find(qn('w:tcW'))
+        if tcW is None:
+            tcW = OxmlElement('w:tcW')
+            tcPr.append(tcW)
+        tcW.set(qn('w:w'), str(width_twips))
+        tcW.set(qn('w:type'), 'dxa')
+
+def set_cell_margins(cell, top=0.1, bottom=0.1, left=0.2, right=0.2):
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcMar = tcPr.find(qn('w:tcMar'))
+    if tcMar is None:
+        tcMar = OxmlElement('w:tcMar')
+        tcPr.append(tcMar)
+    for name, value in (('top', top), ('bottom', bottom), ('start', left), ('end', right)):
+        node = tcMar.find(qn(f'w:{name}'))
+        if node is None:
+            node = OxmlElement(f'w:{name}')
+            tcMar.append(node)
+        node.set(qn('w:w'), str(int(Cm(value).twips)))
+        node.set(qn('w:type'), 'dxa')
+
+def set_header_vertical_center(cell, font_size_pt, row_height_pt, left=0.2, right=0.2):
+    text_height_cm = font_size_pt * 0.035
+    row_height_cm = row_height_pt * 0.035
+    top_margin = max((row_height_cm - text_height_cm) / 2, 0)
+    set_cell_margins(cell, top=top_margin, bottom=0.1, left=left, right=right)
+
+def set_body_top_centered(cell, font_size_pt, row_height_pt, left=0.2, right=0.2):
+    top_margin = 0.20  # justering för visuellt centrerad body
+    set_cell_margins(cell, top=top_margin, bottom=0.1, left=left, right=right)
+
+# ============================================================
+# Create Excel
+# ============================================================
+def create_excel():
+    try:
+        font_name = font_var.get()
+        header_font_size = int(header_size_var.get())
+        body_font_size = int(body_size_var.get())
+        header_row_height = int(header_height_var.get())
+        body_row_height = int(body_height_var.get())
+        header_bg = header_bg_var.get().replace("#", "").upper().zfill(6)
+        border_color = border_color_var.get().replace("#", "").upper().zfill(6)
+        border_style = border_style_var.get()
+
+        file_path = filedialog.asksaveasfilename(
+            title="Save As Excel",
+            initialfile="excel_template.xlsx",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+        if not file_path:
+            return
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+
+        headers = ["Pin Number", "Pin name", "Type", "Description"]
+        ws.append(headers)
+
+        # Header
+        for cell in ws[1]:
+            cell.font = Font(name=font_name, size=header_font_size, color="FFFFFF")
+            cell.fill = PatternFill(start_color=header_bg, end_color=header_bg, fill_type="solid")
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[1].height = header_row_height
+
+        # Border
+        border = Border(
+            left=Side(style=border_style, color=border_color),
+            right=Side(style=border_style, color=border_color),
+            top=Side(style=border_style, color=border_color),
+            bottom=Side(style=border_style, color=border_color)
+        )
+
+        # Body
+        for row_idx, row in enumerate(ws["A1:D10"], start=1):
+            for cell in row:
+                if cell.value is None:
+                    cell.value = ""
+                cell.border = border
+                if row_idx > 1:
+                    cell.font = Font(name=font_name, size=body_font_size, color="000000")
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+
+        for r in range(2, 11):
+            ws.row_dimensions[r].height = body_row_height
+
+        # Column widths
+        ws.column_dimensions["A"].width = 44
+        ws.column_dimensions["B"].width = 18
+        ws.column_dimensions["C"].width = 14
+        ws.column_dimensions["D"].width = 26
+
+        # Data validation
+        dv = DataValidation(type="decimal", operator="between", formula1=0, formula2=100)
+        ws.add_data_validation(dv)
+        dv.add("D2:D100")
+
+        wb.save(file_path)
+        messagebox.showinfo("Done", "Excel template created successfully!")
+
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
+
+# ============================================================
+# Create Word
+# ============================================================
+def create_word():
+    try:
+        font_name = font_var.get()
+        header_font_size = int(header_size_var.get())
+        body_font_size = int(body_size_var.get())
+        header_height = int(header_height_var.get())
+        body_height = int(body_height_var.get())
+        border_width = border_width_from_style(border_style_var.get())
+
+        excel_file = filedialog.askopenfilename(
+            title="Select Excel file to convert",
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+        if not excel_file:
+            return
+
+        df = pd.read_excel(excel_file)
+        doc = Document()
+
+        # Margins
+        section = doc.sections[0]
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+        section.left_margin = Cm(1.5)
+        section.right_margin = Cm(1.5)
+
+        # Table
+        table = doc.add_table(rows=1, cols=len(df.columns))
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        # Header
+        hdr_cells = table.rows[0].cells
+        header_color = header_bg_var.get().replace("#", "").upper().zfill(6)
+        for i, col_name in enumerate(df.columns):
+            cell = hdr_cells[i]
+            cell.text = ""  # rensa eventuellt gammalt innehåll
+            paragraph = cell.paragraphs[0]
+            run = paragraph.add_run(str(col_name))
+            run.font.bold = False
+            run.font.size = Pt(header_font_size)
+            run.font.name = font_name
+            run.font.color.rgb = RGBColor(255,255,255)
+
+            set_cell_bg(cell, header_color)
+            set_cell_border(cell, color=border_color_var.get().replace("#","").upper().zfill(6), width=border_width)
+            set_header_vertical_center(cell, header_font_size, header_height)
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+        # Body
+        for _, row in df.iterrows():
+            row_cells = table.add_row().cells
+            for i, value in enumerate(row):
+                cell = row_cells[i]
+                cell.text = ""  # rensa
+                paragraph = cell.paragraphs[0]
+                run = paragraph.add_run(str(value))
+                run.font.name = font_name
+                run.font.size = Pt(body_font_size)
+                run.font.color.rgb = RGBColor(0,0,0)
+
+                set_cell_bg(cell, "FFFFFF")
+                set_cell_border(cell, color=border_color_var.get().replace("#","").upper().zfill(6), width=border_width)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+                set_body_top_centered(cell, body_font_size, body_height)
+
+        # Column widths
+        for i, width_var in enumerate([col1_width_var, col2_width_var, col3_width_var, col4_width_var]):
+            try:
+                set_column_width(table, i, float(width_var.get()))
+            except ValueError:
+                set_column_width(table, i, 5)
+
+        # Row heights
+        table.autofit = False
+        table.rows[0].height = Pt(header_height)
+        table.rows[0].height_rule = None
+        for row in table.rows[1:]:
+            row.height = Pt(body_height)
+            row.height_rule = None
+
+        # Save
+        save_path = filedialog.asksaveasfilename(
+            title="Save Word As",
+            initialfile="excel_table.docx",
+            defaultextension=".docx",
+            filetypes=[("Word files", "*.docx")]
+        )
+        if not save_path:
+            return
+
+        doc.save(save_path)
+        messagebox.showinfo("Done", f"Word file created:\n{save_path}")
+
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
+
+# ============================================================
+# File selectors
+# ============================================================
+def choose_header_bg():
+    color = colorchooser.askcolor(title="Choose header background color")[1]
+    if color:
+        header_bg_var.set(color)
+        header_preview.config(bg=color)
+
+def choose_border_color():
+    color = colorchooser.askcolor(title="Choose border color")[1]
+    if color:
+        border_color_var.set(color)
+        border_preview.config(bg=color)
+
+def choose_balmap():
+    path = filedialog.askopenfilename(title="Select Balmap (.xlsx)", filetypes=[("Excel files", "*.xlsx")])
+    if path:
+        balmap_path.set(path)
+
+# ============================================================
+# GUI
+# ============================================================
+root = tk.Tk()
+root.title("Excel Template Generator")
+root.geometry("500x720")
+root.resizable(False, False)
+
+# Variables
+font_var = tk.StringVar(value="Century Gothic")
+header_size_var = tk.StringVar(value="11")
+body_size_var = tk.StringVar(value="10")
+header_height_var = tk.StringVar(value="14")
+body_height_var = tk.StringVar(value="16")
+header_bg_var = tk.StringVar(value="#009AE0")
+border_color_var = tk.StringVar(value="#AEAEAE")
+border_style_var = tk.StringVar(value="medium")
+balmap_path = tk.StringVar(value="")
+col1_width_var = tk.StringVar(value="9")
+col2_width_var = tk.StringVar(value="3.7")
+col3_width_var = tk.StringVar(value="2.3")
+col4_width_var = tk.StringVar(value="5")
+
+# GUI layout
+ttk.Label(root, text="Ballmap (.xlsx):").pack(anchor="w", padx=20, pady=(15, 0))
+balmap_frame = tk.Frame(root)
+balmap_frame.pack(fill="x", padx=20)
+ttk.Entry(balmap_frame, textvariable=balmap_path, state="readonly").pack(side="left", fill="x", expand=True)
+ttk.Button(balmap_frame, text="Browse...", command=choose_balmap).pack(side="left", padx=(8, 0))
+
+ttk.Label(root, text="Font:").pack(anchor="w", padx=20, pady=(15,0))
+ttk.Combobox(root, textvariable=font_var,
+             values=["Calibri","Arial","Century Gothic","Segoe UI","Tahoma"],
+             state="readonly").pack(fill="x", padx=20)
+
+ttk.Label(root, text="Header font size:").pack(anchor="w", padx=20, pady=(10,0))
+ttk.Entry(root, textvariable=header_size_var).pack(fill="x", padx=20)
+
+ttk.Label(root, text="Body font size:").pack(anchor="w", padx=20, pady=(10,0))
+ttk.Entry(root, textvariable=body_size_var).pack(fill="x", padx=20)
+
+ttk.Label(root, text="Header row height:").pack(anchor="w", padx=20, pady=(10,0))
+ttk.Entry(root, textvariable=header_height_var).pack(fill="x", padx=20)
+
+ttk.Label(root, text="Body row height:").pack(anchor="w", padx=20, pady=(10,0))
+ttk.Entry(root, textvariable=body_height_var).pack(fill="x", padx=20)
+
+ttk.Label(root, text="Header background color:").pack(anchor="w", padx=20, pady=(10,0))
+header_frame = tk.Frame(root)
+header_frame.pack(fill="x", padx=20)
+header_preview = tk.Label(header_frame, width=4, bg=header_bg_var.get())
+header_preview.pack(side="left", padx=(0,10))
+ttk.Button(header_frame, text="Choose", command=choose_header_bg).pack(side="left")
+
+ttk.Label(root, text="Border color:").pack(anchor="w", padx=20, pady=(10,0))
+border_frame = tk.Frame(root)
+border_frame.pack(fill="x", padx=20)
+border_preview = tk.Label(border_frame, width=4, bg=border_color_var.get())
+border_preview.pack(side="left", padx=(0,10))
+ttk.Button(border_frame, text="Choose", command=choose_border_color).pack(side="left")
+
+ttk.Label(root, text="Border thickness:").pack(anchor="w", padx=20, pady=(10,0))
+ttk.Combobox(root, textvariable=border_style_var, values=["thin","medium","thick"], state="readonly").pack(fill="x", padx=20)
+
+ttk.Button(root, text="Save Excel...", command=create_excel).pack(pady=15)
+ttk.Button(root, text="Export to Word...", command=create_word).pack(pady=10)
+
+root.mainloop()
